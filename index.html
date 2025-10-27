@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Inkhale — Shared Dashboard (Supabase)</title>
+  <style>
+    :root{ --bg:#f7fafc; --card:#fff; --muted:#6b7280; --accent:#4F46E5 }
+    html,body{height:100%}
+    body{ margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:#0f172a }
+    .container{ max-width:1000px; margin:24px auto; padding:0 16px }
+    h1{ margin:0 0 8px 0 }
+    .muted{ color:#6b7280 }
+    .grid{ display:grid; gap:12px }
+    .kpi{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:16px 0 }
+    .card{ background:var(--card); border-radius:10px; padding:12px; box-shadow:0 4px 12px rgba(2,6,23,.06) }
+    .kpi .card{ text-align:center }
+    .value{ font-size:28px; font-weight:700 }
+    .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+    label{ font-size:12px; color:#334155 }
+    input, select{ width:100%; box-sizing:border-box; padding:8px; border:1px solid #e5e7eb; border-radius:8px; }
+    .btn{ padding:8px 12px; border:none; background:var(--accent); color:white; border-radius:8px; cursor:pointer }
+    table{ width:100%; border-collapse:collapse; font-size:14px }
+    th,td{ padding:8px; border-bottom:1px solid #eef2f6; text-align:left }
+    .right{ text-align:right }
+    .toolbar{ display:flex; gap:8px; flex-wrap:wrap }
+    .danger{ background:#e11d48 }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Inkhale — Shared Dashboard</h1>
+    <div class="muted">Cloud-synced via Supabase. Currency: <b>₱ PHP</b>. Org: <code id="orgLabel"></code></div>
+
+    <section class="kpi">
+      <div class="card"><div class="muted">Total Income</div><div id="kpi-income" class="value">₱0.00</div></div>
+      <div class="card"><div class="muted">Total Expenses</div><div id="kpi-expenses" class="value">₱0.00</div></div>
+      <div class="card"><div class="muted">Net</div><div id="kpi-net" class="value">₱0.00</div></div>
+    </section>
+
+    <section class="grid" style="grid-template-columns:1fr 1fr;">
+      <div class="card">
+        <h3>Add Sale</h3>
+        <div class="row">
+          <div><label>Date</label><input id="sale-date" type="date" /></div>
+          <div><label>Amount (₱)</label><input id="sale-amount" type="number" step="0.01" placeholder="0.00" /></div>
+        </div>
+        <div style="margin-top:8px"><label>Note (optional)</label><input id="sale-note" placeholder="e.g., ‘Disposable Vape’" /></div>
+        <div style="margin-top:12px"><button class="btn" id="add-sale">Add Sale</button></div>
+      </div>
+
+      <div class="card">
+        <h3>Add Expense</h3>
+        <div class="row">
+          <div><label>Date</label><input id="exp-date" type="date" /></div>
+          <div><label>Amount (₱)</label><input id="exp-amount" type="number" step="0.01" placeholder="0.00" /></div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div><label>Category</label>
+            <select id="exp-cat">
+              <option>Rent</option><option>Supplies</option><option>Inventory</option>
+              <option>Utilities</option><option>Marketing</option><option>Salaries</option>
+              <option>Repairs</option><option>Misc</option>
+            </select>
+          </div>
+          <div><label>Note (optional)</label><input id="exp-note" placeholder="e.g., ‘Batteries & coils’" /></div>
+        </div>
+        <div style="margin-top:12px"><button class="btn" id="add-exp">Add Expense</button></div>
+      </div>
+    </section>
+
+    <section class="grid" style="grid-template-columns:1fr 1fr; margin-top:12px;">
+      <div class="card">
+        <div class="toolbar" style="justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0">Sales</h3><button class="btn" id="export-sales">Export CSV</button>
+        </div>
+        <table><thead><tr><th>Date</th><th>Amount (₱)</th><th>Note</th><th></th></tr></thead><tbody id="sales-body"></tbody></table>
+      </div>
+      <div class="card">
+        <div class="toolbar" style="justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0">Expenses</h3><button class="btn" id="export-exp">Export CSV</button>
+        </div>
+        <table><thead><tr><th>Date</th><th>Amount (₱)</th><th>Category</th><th>Note</th><th></th></tr></thead><tbody id="exp-body"></tbody></table>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:12px">
+      <div class="toolbar">
+        <button class="btn danger" id="clear-all">Delete ALL rows (this org)</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <script>
+    const SUPABASE_URL  = 'REPLACE_WITH_SUPABASE_URL';
+    const SUPABASE_ANON = 'REPLACE_WITH_SUPABASE_ANON_KEY';
+    const { createClient } = supabase;
+    const db = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+    const params = new URLSearchParams(location.search);
+    const ORG = (params.get('org') || 'inkhale').toLowerCase().replace(/[^a-z0-9-_]/g,'');
+    document.getElementById('orgLabel').textContent = ORG;
+    const peso = (n) => '₱' + Number(n||0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const today = () => new Date().toISOString().slice(0,10);
+    document.getElementById('sale-date').value = today();
+    document.getElementById('exp-date').value  = today();
+
+    let sales = [], expenses = [];
+
+    async function loadAll(){
+      const { data: s } = await db.from('sales').select('*').eq('org_id', ORG).order('date', { ascending:false }).limit(500);
+      const { data: e } = await db.from('expenses').select('*').eq('org_id', ORG).order('date', { ascending:false }).limit(500);
+      sales = s || []; expenses = e || [];
+      render();
+    }
+
+    function render(){
+      const ti = sales.reduce((a,b)=> a + Number(b.amount||0), 0);
+      const te = expenses.reduce((a,b)=> a + Number(b.amount||0), 0);
+      document.getElementById('kpi-income').textContent  = peso(ti);
+      document.getElementById('kpi-expenses').textContent= peso(te);
+      const net = ti - te; const el = document.getElementById('kpi-net');
+      el.textContent = peso(net); el.style.color = net>=0 ? 'green' : 'red';
+
+      const sb = document.getElementById('sales-body'); sb.innerHTML='';
+      sales.forEach(r=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${r.date}</td><td>${peso(r.amount)}</td><td>${escapeHTML(r.note||'')}</td><td class="right"><button class="btn danger" data-del-sale="${r.id}">Delete</button></td>`;
+        sb.appendChild(tr);
+      });
+      const eb = document.getElementById('exp-body'); eb.innerHTML='';
+      expenses.forEach(r=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${r.date}</td><td>${peso(r.amount)}</td><td>${escapeHTML(r.category||'')}</td><td>${escapeHTML(r.note||'')}</td><td class="right"><button class="btn danger" data-del-exp="${r.id}">Delete</button></td>`;
+        eb.appendChild(tr);
+      });
+
+      [...document.querySelectorAll('[data-del-sale]')].forEach(btn => btn.onclick = async ()=>{
+        const id = btn.getAttribute('data-del-sale');
+        await db.from('sales').delete().eq('id', id).eq('org_id', ORG);
+        await loadAll();
+      });
+      [...document.querySelectorAll('[data-del-exp]')].forEach(btn => btn.onclick = async ()=>{
+        const id = btn.getAttribute('data-del-exp');
+        await db.from('expenses').delete().eq('id', id).eq('org_id', ORG);
+        await loadAll();
+      });
+    }
+
+    document.getElementById('add-sale').onclick = async () => {
+      const date = document.getElementById('sale-date').value || today();
+      const amt  = parseFloat(document.getElementById('sale-amount').value||'0');
+      if(isNaN(amt) || amt<=0) return alert('Enter a valid sale amount');
+      const note = document.getElementById('sale-note').value.trim();
+      await db.from('sales').insert({ org_id: ORG, date, amount: amt, note });
+      document.getElementById('sale-amount').value=''; document.getElementById('sale-note').value='';
+      await loadAll();
+    };
+
+    document.getElementById('add-exp').onclick = async () => {
+      const date = document.getElementById('exp-date').value || today();
+      const amt  = parseFloat(document.getElementById('exp-amount').value||'0');
+      if(isNaN(amt) || amt<=0) return alert('Enter a valid expense amount');
+      const cat  = document.getElementById('exp-cat').value;
+      const note = document.getElementById('exp-note').value.trim();
+      await db.from('expenses').insert({ org_id: ORG, date, amount: amt, category: cat, note });
+      document.getElementById('exp-amount').value=''; document.getElementById('exp-note').value='';
+      await loadAll();
+    };
+
+    document.getElementById('export-sales').onclick = () => exportCSV(sales, 'sales.csv');
+    document.getElementById('export-exp').onclick   = () => exportCSV(expenses, 'expenses.csv');
+    document.getElementById('clear-all').onclick = async () => {
+      if(confirm('Delete ALL rows for org: '+ORG+' ?')){
+        await db.from('sales').delete().eq('org_id', ORG);
+        await db.from('expenses').delete().eq('org_id', ORG);
+        await loadAll();
+      }
+    };
+
+    function exportCSV(rows, filename){
+      if(!rows.length) return alert('No data to export');
+      const keys = Object.keys(rows[0]);
+      const csv = [keys.join(','), ...rows.map(r=> keys.map(k=> JSON.stringify(r[k]??'')).join(','))].join('\n');
+      const blob = new Blob([csv], {type:'text/csv'});
+      const url = URL.createObjectURL(blob); const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+    }
+    function escapeHTML(s){ return (s+"" ).replace(/[&<>"']/g, c=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])) }
+
+    loadAll();
+  </script>
+</body>
+</html>
